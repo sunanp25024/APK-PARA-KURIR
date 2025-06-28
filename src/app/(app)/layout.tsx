@@ -14,7 +14,6 @@ import {
   SidebarMenuButton,
   SidebarFooter,
   SidebarInset,
-  useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { AppLogo } from "@/components/icons/AppLogo";
@@ -84,10 +83,10 @@ const allNavItems: NavItem[] = [
   { href: "/settings", icon: Settings, label: "Pengaturan Akun", roles: ['MasterAdmin', 'Admin', 'PIC', 'Kurir'] },
 ];
 
-// Add error boundary to catch and handle errors gracefully
+// Enhanced error boundary with better error handling
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
-  { hasError: boolean }
+  { hasError: boolean; error?: Error }
 > {
   constructor(props: { children: React.ReactNode }) {
     super(props);
@@ -95,21 +94,42 @@ class ErrorBoundary extends React.Component<
   }
 
   static getDerivedStateFromError(error: Error) {
-    return { hasError: true };
+    console.error('Layout Error Boundary caught error:', error);
+    return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('Layout Error Boundary caught an error:', error, errorInfo);
+    console.error('Layout Error Boundary details:', error, errorInfo);
+    
+    // If it's a workStore error, try to recover
+    if (error.message?.includes('workStore') || error.message?.includes('searchParams')) {
+      console.log('Detected workStore error, attempting recovery...');
+      setTimeout(() => {
+        this.setState({ hasError: false, error: undefined });
+      }, 1000);
+    }
   }
 
   render() {
     if (this.state.hasError) {
       return (
         <div className="flex h-screen items-center justify-center">
-          <div className="text-center">
-            <h2 className="text-xl font-semibold mb-2">Something went wrong</h2>
-            <p className="text-muted-foreground mb-4">Please refresh the page to try again.</p>
-            <Button onClick={() => window.location.reload()}>Refresh Page</Button>
+          <div className="text-center max-w-md">
+            <h2 className="text-xl font-semibold mb-2">Terjadi Kesalahan Sementara</h2>
+            <p className="text-muted-foreground mb-4">
+              Sistem sedang memulihkan diri. Silakan tunggu sebentar atau refresh halaman.
+            </p>
+            <div className="space-x-2">
+              <Button 
+                onClick={() => this.setState({ hasError: false, error: undefined })}
+                variant="outline"
+              >
+                Coba Lagi
+              </Button>
+              <Button onClick={() => window.location.reload()}>
+                Refresh Halaman
+              </Button>
+            </div>
           </div>
         </div>
       );
@@ -126,86 +146,126 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [navItems, setNavItems] = React.useState<NavItem[]>([]);
   const [loadingAuth, setLoadingAuth] = React.useState(true);
   const [mounted, setMounted] = React.useState(false);
+  const [isHydrated, setIsHydrated] = React.useState(false);
 
-  // Ensure component is mounted before doing anything
+  // Critical: Ensure proper mounting sequence to prevent workStore issues
   React.useEffect(() => {
     setMounted(true);
+    // Add a small delay to ensure DOM is fully ready
+    const timer = setTimeout(() => {
+      setIsHydrated(true);
+    }, 100);
+    
+    return () => clearTimeout(timer);
   }, []);
 
   React.useEffect(() => {
-    if (!mounted) return;
+    if (!mounted || !isHydrated) return;
 
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setLoadingAuth(true);
-      try {
-        if (firebaseUser) {
-          let userProfile: UserProfile | null = null;
-          
-          const localData = localStorage.getItem('loggedInUser');
-          if (localData) {
+    let unsubscribe: (() => void) | undefined;
+
+    try {
+      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        setLoadingAuth(true);
+        try {
+          if (firebaseUser) {
+            let userProfile: UserProfile | null = null;
+            
+            // Safe localStorage access with error handling
             try {
-              const parsed = JSON.parse(localData) as UserProfile;
-              if (parsed.uid === firebaseUser.uid) {
-                userProfile = parsed;
+              const localData = localStorage.getItem('loggedInUser');
+              if (localData) {
+                const parsed = JSON.parse(localData) as UserProfile;
+                if (parsed.uid === firebaseUser.uid) {
+                  userProfile = parsed;
+                }
               }
             } catch (e) { 
               console.warn("Could not parse user data from localStorage.", e);
-              localStorage.removeItem('loggedInUser');
+              try {
+                localStorage.removeItem('loggedInUser');
+              } catch (storageError) {
+                console.warn("Could not clear localStorage:", storageError);
+              }
             }
-          }
 
-          if (!userProfile) {
-            try {
-              const userDocRef = doc(db, "users", firebaseUser.uid);
-              const userDocSnap = await getDoc(userDocRef);
-              if (userDocSnap.exists()) {
-                userProfile = { uid: firebaseUser.uid, ...userDocSnap.data() } as UserProfile;
-                localStorage.setItem('loggedInUser', JSON.stringify(userProfile));
-                localStorage.setItem('isAuthenticated', 'true');
-              } else {
-                await signOut(auth);
+            if (!userProfile) {
+              try {
+                const userDocRef = doc(db, "users", firebaseUser.uid);
+                const userDocSnap = await getDoc(userDocRef);
+                if (userDocSnap.exists()) {
+                  userProfile = { uid: firebaseUser.uid, ...userDocSnap.data() } as UserProfile;
+                  try {
+                    localStorage.setItem('loggedInUser', JSON.stringify(userProfile));
+                    localStorage.setItem('isAuthenticated', 'true');
+                  } catch (storageError) {
+                    console.warn("Could not save to localStorage:", storageError);
+                  }
+                } else {
+                  await signOut(auth);
+                  userProfile = null;
+                }
+              } catch (error) {
+                console.error("Error fetching user profile from Firestore:", error);
+                try {
+                  await signOut(auth);
+                } catch (signOutError) {
+                  console.error("Error signing out:", signOutError);
+                }
                 userProfile = null;
               }
-            } catch (error) {
-              console.error("Error fetching user profile from Firestore:", error);
-              await signOut(auth);
-              userProfile = null;
             }
-          }
-          
-          if (userProfile) {
-            setCurrentUser(userProfile);
-            if (userProfile.role) {
-              setNavItems(allNavItems.filter(item => item.roles.includes(userProfile!.role)));
+            
+            if (userProfile) {
+              setCurrentUser(userProfile);
+              if (userProfile.role) {
+                setNavItems(allNavItems.filter(item => item.roles.includes(userProfile!.role)));
+              }
+            } else {
+               setCurrentUser(null);
             }
-          } else {
-             setCurrentUser(null);
-          }
 
-        } else {
-          localStorage.removeItem('isAuthenticated');
-          localStorage.removeItem('loggedInUser');
-          localStorage.removeItem('courierCheckedInToday');
+          } else {
+            // Safe cleanup of localStorage
+            try {
+              localStorage.removeItem('isAuthenticated');
+              localStorage.removeItem('loggedInUser');
+              localStorage.removeItem('courierCheckedInToday');
+            } catch (storageError) {
+              console.warn("Could not clear localStorage:", storageError);
+            }
+            
+            setCurrentUser(null);
+            setNavItems([]);
+            
+            const publicPages = ['/', '/login', '/setup-admin'];
+            if (!publicPages.includes(pathname)) {
+              router.replace('/');
+            }
+          }
+        } catch (error) {
+          console.error("Auth state change error:", error);
           setCurrentUser(null);
           setNavItems([]);
-          const publicPages = ['/', '/login', '/setup-admin'];
-          if (!publicPages.includes(pathname)) {
-            router.replace('/');
-          }
+        } finally {
+          setLoadingAuth(false);
         }
-      } catch (error) {
-        console.error("Auth state change error:", error);
-        setCurrentUser(null);
-        setNavItems([]);
-      } finally {
-        setLoadingAuth(false);
-      }
-    });
+      });
+    } catch (error) {
+      console.error("Error setting up auth listener:", error);
+      setLoadingAuth(false);
+    }
 
     return () => {
-      unsubscribe();
+      if (unsubscribe) {
+        try {
+          unsubscribe();
+        } catch (error) {
+          console.error("Error unsubscribing from auth:", error);
+        }
+      }
     };
-  }, [router, pathname, mounted]);
+  }, [router, pathname, mounted, isHydrated]);
 
   const handleLogout = async () => {
     try {
@@ -213,23 +273,45 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       router.push('/');
     } catch (error) {
       console.error("Error signing out: ", error);
-      localStorage.clear();
+      try {
+        localStorage.clear();
+      } catch (storageError) {
+        console.warn("Could not clear localStorage:", storageError);
+      }
       router.push('/');
     }
   };
 
-  // Don't render anything until mounted to avoid hydration issues
-  if (!mounted) {
-    return null;
+  // Critical: Don't render anything until fully mounted and hydrated
+  if (!mounted || !isHydrated) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="animate-pulse">Memuat aplikasi...</div>
+      </div>
+    );
   }
 
   if (loadingAuth) {
-    return <div className="flex h-screen items-center justify-center">Memverifikasi sesi...</div>;
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
+          <p>Memverifikasi sesi...</p>
+        </div>
+      </div>
+    );
   }
   
   const publicPages = ['/', '/login', '/setup-admin'];
   if (!currentUser && !publicPages.includes(pathname)) {
-    return <div className="flex h-screen items-center justify-center">Mengalihkan ke halaman utama...</div>;
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="text-center">
+          <div className="animate-pulse mb-2">Mengalihkan...</div>
+          <p className="text-sm text-muted-foreground">Mengarahkan ke halaman utama</p>
+        </div>
+      </div>
+    );
   }
   
   if (publicPages.includes(pathname)) {

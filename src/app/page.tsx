@@ -35,42 +35,69 @@ export default function LandingPage() {
   const { toast } = useToast();
   const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [isHydrated, setIsHydrated] = useState(false);
 
+  // Critical: Proper mounting sequence to prevent workStore issues
   useEffect(() => {
     setMounted(true);
     
+    // Add delay to ensure DOM is fully ready
+    const timer = setTimeout(() => {
+      setIsHydrated(true);
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted || !isHydrated) return;
+
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setInstallPromptEvent(e as BeforeInstallPromptEvent);
     };
 
     if (typeof window !== 'undefined') {
-      window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      try {
+        window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
 
-      return () => {
-        window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      };
+        return () => {
+          window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+        };
+      } catch (error) {
+        console.warn('Error setting up install prompt listener:', error);
+      }
     }
-  }, []);
+  }, [mounted, isHydrated]);
 
   const handleInstallClick = () => {
     if (!installPromptEvent) {
       return;
     }
-    installPromptEvent.prompt();
-    installPromptEvent.userChoice.then((choiceResult) => {
-      if (choiceResult.outcome === 'accepted') {
-        toast({ title: 'Instalasi Berhasil', description: 'Aplikasi sedang diinstal di perangkat Anda.' });
-      } else {
-        toast({ title: 'Instalasi Dibatalkan', description: 'Anda dapat menginstal aplikasi nanti.', variant: 'default' });
-      }
-      setInstallPromptEvent(null);
-    });
+    
+    try {
+      installPromptEvent.prompt();
+      installPromptEvent.userChoice.then((choiceResult) => {
+        if (choiceResult.outcome === 'accepted') {
+          toast({ title: 'Instalasi Berhasil', description: 'Aplikasi sedang diinstal di perangkat Anda.' });
+        } else {
+          toast({ title: 'Instalasi Dibatalkan', description: 'Anda dapat menginstal aplikasi nanti.', variant: 'default' });
+        }
+        setInstallPromptEvent(null);
+      });
+    } catch (error) {
+      console.error('Error during install prompt:', error);
+      toast({ title: 'Error', description: 'Terjadi kesalahan saat instalasi.', variant: 'destructive' });
+    }
   };
 
-  // Don't render until mounted to avoid hydration issues
-  if (!mounted) {
-    return null;
+  // Don't render until fully mounted and hydrated
+  if (!mounted || !isHydrated) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="animate-pulse">Memuat halaman...</div>
+      </div>
+    );
   }
 
   return (

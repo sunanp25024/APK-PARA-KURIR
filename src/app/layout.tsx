@@ -7,8 +7,9 @@ export const metadata: Metadata = {
   description: 'Aplikasi INSAN MOBILE',
 };
 
-// Force dynamic rendering to avoid static generation issues
+// Force dynamic rendering to prevent workStore issues
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default function RootLayout({
   children,

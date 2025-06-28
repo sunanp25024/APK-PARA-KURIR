@@ -22,16 +22,23 @@ const nextConfig = {
       },
     ],
   },
-  // Experimental flags to help with workStore issue
+  // Critical fixes for workStore issue
   experimental: {
     serverComponentsExternalPackages: ['firebase-admin'],
-    // Force static generation to avoid runtime issues
     forceSwcTransforms: true,
+    // Disable problematic features that cause workStore issues
+    esmExternals: 'loose',
+    // Force static optimization off to prevent workStore conflicts
+    optimizePackageImports: false,
   },
-  // Disable some features that might conflict with Firebase Studio
+  // Ensure proper compilation
   swcMinify: true,
-  // Ensure proper handling of dynamic routes
+  // Disable trailing slash to prevent routing issues
   trailingSlash: false,
+  // Force output to be standalone to avoid workStore conflicts
+  output: 'standalone',
+  // Disable static optimization that can cause workStore issues
+  generateEtags: false,
   // Add headers to help with CORS and caching
   async headers() {
     return [
@@ -46,9 +53,26 @@ const nextConfig = {
             key: 'X-Content-Type-Options',
             value: 'nosniff',
           },
+          {
+            key: 'Cache-Control',
+            value: 'no-cache, no-store, must-revalidate',
+          },
         ],
       },
     ];
+  },
+  // Webpack configuration to prevent workStore issues
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      // Prevent client-side issues with workStore
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        net: false,
+        tls: false,
+      };
+    }
+    return config;
   },
 };
 
