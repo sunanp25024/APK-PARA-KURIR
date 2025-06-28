@@ -104,11 +104,9 @@ class ErrorBoundary extends React.Component<
     // If it's a workStore error, try to recover
     if (error.message?.includes('workStore') || error.message?.includes('searchParams')) {
       console.log('Detected workStore error, attempting recovery...');
-      if (typeof window !== 'undefined') {
-        setTimeout(() => {
-          this.setState({ hasError: false, error: undefined });
-        }, 1000);
-      }
+      setTimeout(() => {
+        this.setState({ hasError: false, error: undefined });
+      }, 1000);
     }
   }
 
@@ -153,17 +151,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // Critical: Ensure proper mounting sequence to prevent workStore issues
   React.useEffect(() => {
     setMounted(true);
-    // Add a small delay to ensure DOM is fully ready - only on client side
-    if (typeof window !== 'undefined') {
-      const timer = setTimeout(() => {
-        setIsHydrated(true);
-      }, 100);
-      
-      return () => clearTimeout(timer);
-    } else {
-      // On server side, set hydrated immediately
+    // Add a small delay to ensure DOM is fully ready
+    const timer = setTimeout(() => {
       setIsHydrated(true);
-    }
+    }, 100);
+    
+    return () => clearTimeout(timer);
   }, []);
 
   React.useEffect(() => {
