@@ -1,4 +1,3 @@
-
 "use client";
 
 import * as React from "react";
@@ -85,6 +84,40 @@ const allNavItems: NavItem[] = [
   { href: "/settings", icon: Settings, label: "Pengaturan Akun", roles: ['MasterAdmin', 'Admin', 'PIC', 'Kurir'] },
 ];
 
+// Add error boundary to catch and handle errors gracefully
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('Layout Error Boundary caught an error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-screen items-center justify-center">
+          <div className="text-center">
+            <h2 className="text-xl font-semibold mb-2">Something went wrong</h2>
+            <p className="text-muted-foreground mb-4">Please refresh the page to try again.</p>
+            <Button onClick={() => window.location.reload()}>Refresh Page</Button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -92,70 +125,87 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
   const [navItems, setNavItems] = React.useState<NavItem[]>([]);
   const [loadingAuth, setLoadingAuth] = React.useState(true);
+  const [mounted, setMounted] = React.useState(false);
+
+  // Ensure component is mounted before doing anything
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
 
   React.useEffect(() => {
+    if (!mounted) return;
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setLoadingAuth(true);
-      if (firebaseUser) {
-        let userProfile: UserProfile | null = null;
-        
-        const localData = localStorage.getItem('loggedInUser');
-        if (localData) {
-          try {
-            const parsed = JSON.parse(localData) as UserProfile;
-            if (parsed.uid === firebaseUser.uid) {
-              userProfile = parsed;
+      try {
+        if (firebaseUser) {
+          let userProfile: UserProfile | null = null;
+          
+          const localData = localStorage.getItem('loggedInUser');
+          if (localData) {
+            try {
+              const parsed = JSON.parse(localData) as UserProfile;
+              if (parsed.uid === firebaseUser.uid) {
+                userProfile = parsed;
+              }
+            } catch (e) { 
+              console.warn("Could not parse user data from localStorage.", e);
+              localStorage.removeItem('loggedInUser');
             }
-          } catch (e) { console.warn("Could not parse user data from localStorage.", e) }
-        }
+          }
 
-        if (!userProfile) {
-          try {
-            const userDocRef = doc(db, "users", firebaseUser.uid);
-            const userDocSnap = await getDoc(userDocRef);
-            if (userDocSnap.exists()) {
-              userProfile = { uid: firebaseUser.uid, ...userDocSnap.data() } as UserProfile;
-              localStorage.setItem('loggedInUser', JSON.stringify(userProfile));
-              localStorage.setItem('isAuthenticated', 'true');
-            } else {
+          if (!userProfile) {
+            try {
+              const userDocRef = doc(db, "users", firebaseUser.uid);
+              const userDocSnap = await getDoc(userDocRef);
+              if (userDocSnap.exists()) {
+                userProfile = { uid: firebaseUser.uid, ...userDocSnap.data() } as UserProfile;
+                localStorage.setItem('loggedInUser', JSON.stringify(userProfile));
+                localStorage.setItem('isAuthenticated', 'true');
+              } else {
+                await signOut(auth);
+                userProfile = null;
+              }
+            } catch (error) {
+              console.error("Error fetching user profile from Firestore:", error);
               await signOut(auth);
               userProfile = null;
             }
-          } catch (error) {
-            console.error("Error fetching user profile from Firestore:", error);
-            await signOut(auth);
-            userProfile = null;
           }
-        }
-        
-        if (userProfile) {
-          setCurrentUser(userProfile);
-          if (userProfile.role) {
-            setNavItems(allNavItems.filter(item => item.roles.includes(userProfile!.role)));
+          
+          if (userProfile) {
+            setCurrentUser(userProfile);
+            if (userProfile.role) {
+              setNavItems(allNavItems.filter(item => item.roles.includes(userProfile!.role)));
+            }
+          } else {
+             setCurrentUser(null);
           }
-        } else {
-           setCurrentUser(null);
-        }
 
-      } else {
-        localStorage.removeItem('isAuthenticated');
-        localStorage.removeItem('loggedInUser');
-        localStorage.removeItem('courierCheckedInToday');
+        } else {
+          localStorage.removeItem('isAuthenticated');
+          localStorage.removeItem('loggedInUser');
+          localStorage.removeItem('courierCheckedInToday');
+          setCurrentUser(null);
+          setNavItems([]);
+          const publicPages = ['/', '/login', '/setup-admin'];
+          if (!publicPages.includes(pathname)) {
+            router.replace('/');
+          }
+        }
+      } catch (error) {
+        console.error("Auth state change error:", error);
         setCurrentUser(null);
         setNavItems([]);
-        const publicPages = ['/', '/login', '/setup-admin'];
-        if (!publicPages.includes(pathname)) {
-          router.replace('/');
-        }
+      } finally {
+        setLoadingAuth(false);
       }
-      setLoadingAuth(false);
     });
 
     return () => {
       unsubscribe();
     };
-  }, [router, pathname]);
-
+  }, [router, pathname, mounted]);
 
   const handleLogout = async () => {
     try {
@@ -168,6 +218,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Don't render anything until mounted to avoid hydration issues
+  if (!mounted) {
+    return null;
+  }
+
   if (loadingAuth) {
     return <div className="flex h-screen items-center justify-center">Memverifikasi sesi...</div>;
   }
@@ -178,85 +233,86 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
   
   if (publicPages.includes(pathname)) {
-    return <>{children}</>;
+    return <ErrorBoundary>{children}</ErrorBoundary>;
   }
-
 
   const userInitials = currentUser?.fullName?.split(" ").map(n => n[0]).join("").toUpperCase() || "XX";
 
   return (
-    <SidebarProvider defaultOpen>
-      <Sidebar>
-        <SidebarHeader className="p-4 border-b border-sidebar-border">
-          <div className="flex items-center space-x-3">
-            <AppLogo className="h-10 w-10 text-primary" />
-            <div className="flex flex-col">
-              <h2 className="text-xl font-semibold text-sidebar-foreground">INSAN MOBILE</h2>
-              <span className="text-xs text-muted-foreground">Aplikasi Mobile</span>
+    <ErrorBoundary>
+      <SidebarProvider defaultOpen>
+        <Sidebar>
+          <SidebarHeader className="p-4 border-b border-sidebar-border">
+            <div className="flex items-center space-x-3">
+              <AppLogo className="h-10 w-10 text-primary" />
+              <div className="flex flex-col">
+                <h2 className="text-xl font-semibold text-sidebar-foreground">INSAN MOBILE</h2>
+                <span className="text-xs text-muted-foreground">Aplikasi Mobile</span>
+              </div>
             </div>
+          </SidebarHeader>
+          <SidebarContent className="p-2">
+            <SidebarMenu>
+              {navItems.map((item) => (
+                <SidebarMenuItem key={item.href}>
+                  <Link href={item.href}>
+                    <SidebarMenuButton
+                      isActive={pathname.startsWith(item.href)}
+                      tooltip={{ children: item.label, side: "right", align: "center" }}
+                    >
+                      <item.icon />
+                      <span>{item.label}</span>
+                    </SidebarMenuButton>
+                  </Link>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarContent>
+          <SidebarFooter className="p-4 border-t border-sidebar-border">
+             <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="w-full justify-start items-center p-2 h-auto">
+                  <Avatar className="h-9 w-9 mr-3">
+                    <AvatarImage src={currentUser?.avatarUrl || `https://placehold.co/100x100.png?text=${userInitials}`} alt={currentUser?.fullName || "User"} data-ai-hint="man face"/>
+                    <AvatarFallback>{userInitials}</AvatarFallback>
+                  </Avatar>
+                  <div className="text-left flex-grow">
+                    <p className="text-sm font-medium text-sidebar-foreground">{currentUser?.fullName || "User"}</p>
+                    <p className="text-xs text-muted-foreground">{currentUser?.id}</p>
+                  </div>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground ml-auto" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start" className="w-56 mb-2">
+                <DropdownMenuLabel>Akun Saya ({currentUser?.role})</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => router.push('/profile')}>
+                  <User className="mr-2 h-4 w-4" />
+                  <span>Profil</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => router.push('/settings')}>
+                  <Settings className="mr-2 h-4 w-4" />
+                  <span>Pengaturan</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={handleLogout} className="text-destructive focus:bg-destructive/10 focus:text-destructive">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  <span>Logout</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </SidebarFooter>
+        </Sidebar>
+        <SidebarInset>
+          <div className="p-4 sm:p-6 lg:p-8">
+            <div className="mb-6 md:hidden">
+               <SidebarTrigger />
+            </div>
+            {children}
           </div>
-        </SidebarHeader>
-        <SidebarContent className="p-2">
-          <SidebarMenu>
-            {navItems.map((item) => (
-              <SidebarMenuItem key={item.href}>
-                <Link href={item.href}>
-                  <SidebarMenuButton
-                    isActive={pathname.startsWith(item.href)}
-                    tooltip={{ children: item.label, side: "right", align: "center" }}
-                  >
-                    <item.icon />
-                    <span>{item.label}</span>
-                  </SidebarMenuButton>
-                </Link>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-        </SidebarContent>
-        <SidebarFooter className="p-4 border-t border-sidebar-border">
-           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="w-full justify-start items-center p-2 h-auto">
-                <Avatar className="h-9 w-9 mr-3">
-                  <AvatarImage src={currentUser?.avatarUrl || `https://placehold.co/100x100.png?text=${userInitials}`} alt={currentUser?.fullName || "User"} data-ai-hint="man face"/>
-                  <AvatarFallback>{userInitials}</AvatarFallback>
-                </Avatar>
-                <div className="text-left flex-grow">
-                  <p className="text-sm font-medium text-sidebar-foreground">{currentUser?.fullName || "User"}</p>
-                  <p className="text-xs text-muted-foreground">{currentUser?.id}</p>
-                </div>
-                <ChevronDown className="h-4 w-4 text-muted-foreground ml-auto" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" className="w-56 mb-2">
-              <DropdownMenuLabel>Akun Saya ({currentUser?.role})</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => router.push('/profile')}>
-                <User className="mr-2 h-4 w-4" />
-                <span>Profil</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => router.push('/settings')}>
-                <Settings className="mr-2 h-4 w-4" />
-                <span>Pengaturan</span>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={handleLogout} className="text-destructive focus:bg-destructive/10 focus:text-destructive">
-                <LogOut className="mr-2 h-4 w-4" />
-                <span>Logout</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </SidebarFooter>
-      </Sidebar>
-      <SidebarInset>
-        <div className="p-4 sm:p-6 lg:p-8">
-          <div className="mb-6 md:hidden">
-             <SidebarTrigger />
-          </div>
-          {children}
-        </div>
-      </SidebarInset>
-      <Toaster />
-    </SidebarProvider>
+        </SidebarInset>
+        <Toaster />
+      </SidebarProvider>
+    </ErrorBoundary>
   );
 }
