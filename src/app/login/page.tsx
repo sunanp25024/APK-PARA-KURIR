@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState } from 'react';
@@ -37,37 +36,55 @@ export default function LoginPage() {
     }
 
     try {
-      await signInWithEmailAndPassword(auth, emailInput, password);
+      console.log('Attempting login with:', emailInput);
+      
+      const userCredential = await signInWithEmailAndPassword(auth, emailInput, password);
+      console.log('Login successful:', userCredential.user.uid);
       
       toast({
         title: 'Login Berhasil',
-        description: `Mengalihkan ke dashboard...`,
+        description: `Selamat datang! Mengalihkan ke dashboard...`,
       });
       
-      // Redirect to dashboard explicitly after successful login
-      router.push('/dashboard');
+      // Small delay to ensure auth state is properly set
+      setTimeout(() => {
+        router.push('/dashboard');
+      }, 500);
       
     } catch (error: any) {
+      console.error('Login error:', error);
       let errorMessage = 'Email atau password salah.';
       
-      // Check for the specific referer block error first
+      // Enhanced error handling with more specific messages
       if (error.message && error.message.includes('auth/requests-from-referer')) {
-        errorMessage = 'Domain aplikasi Vercel Anda diblokir. Pastikan Anda telah menambahkan "apk-para-kurir-tau.vercel.app" ke daftar "HTTP referrers" pada setelan API Key di Google Cloud Console.';
+        errorMessage = 'Domain aplikasi diblokir. Pastikan domain sudah ditambahkan ke HTTP referrers di Google Cloud Console.';
+      } else if (error.message && error.message.includes('auth/api-key-not-valid')) {
+        errorMessage = 'API Key tidak valid. Periksa konfigurasi Firebase.';
       } else {
         switch (error.code) {
           case 'auth/user-not-found':
+            errorMessage = 'Akun dengan email ini tidak ditemukan. Periksa kembali email Anda.';
+            break;
           case 'auth/wrong-password':
+            errorMessage = 'Password yang Anda masukkan salah.';
+            break;
           case 'auth/invalid-credential':
-            errorMessage = 'Email atau password yang Anda masukkan salah.';
+            errorMessage = 'Email atau password tidak valid. Periksa kembali data login Anda.';
             break;
           case 'auth/invalid-email':
             errorMessage = 'Format email tidak valid.';
             break;
           case 'auth/too-many-requests':
-              errorMessage = 'Terlalu banyak percobaan login. Coba lagi nanti.';
-              break;
+            errorMessage = 'Terlalu banyak percobaan login. Coba lagi dalam beberapa menit.';
+            break;
+          case 'auth/user-disabled':
+            errorMessage = 'Akun Anda telah dinonaktifkan. Hubungi administrator.';
+            break;
+          case 'auth/network-request-failed':
+            errorMessage = 'Koneksi internet bermasalah. Periksa koneksi Anda.';
+            break;
           default:
-            errorMessage = 'Terjadi kesalahan saat login. Silakan coba lagi nanti.';
+            errorMessage = `Terjadi kesalahan saat login: ${error.message}`;
             break;
         }
       }
@@ -76,7 +93,7 @@ export default function LoginPage() {
         title: 'Login Gagal',
         description: errorMessage,
         variant: 'destructive',
-        duration: 9000, // Give more time to read the detailed error
+        duration: 10000, // Give more time to read the error
       });
     } finally {
       setIsLoading(false);
@@ -107,6 +124,9 @@ export default function LoginPage() {
                 required
                 className="bg-input border-border focus:ring-primary focus:border-primary"
               />
+              <p className="text-xs text-muted-foreground">
+                Gunakan email yang terdaftar di sistem (contoh: masmin@coba.com)
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
@@ -114,7 +134,7 @@ export default function LoginPage() {
                 <Input
                   id="password"
                   type={showPassword ? "text" : "password"}
-                  placeholder="******"
+                  placeholder="Masukkan password Anda"
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -133,8 +153,17 @@ export default function LoginPage() {
               </div>
             </div>
             <div className="flex flex-col gap-3">
-              <Button type="submit" className="w-full bg-primary hover:bg-primary/90 text-primary-foreground text-lg py-3" disabled={isLoading}>
-                {isLoading ? 'Loading...' : (
+              <Button 
+                type="submit" 
+                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground text-lg py-3" 
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <div className="flex items-center">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Memproses...
+                  </div>
+                ) : (
                   <>
                     <LogIn className="mr-2 h-5 w-5" /> Login
                   </>
@@ -144,8 +173,15 @@ export default function LoginPage() {
           </form>
         </CardContent>
         <CardFooter className="flex flex-col items-center text-center text-sm text-muted-foreground space-y-2 pt-4">
-           <p>
-              Bermasalah saat login? <Link href="/setup-admin" className="underline hover:text-primary">Setup Akun MasterAdmin</Link>
+          <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md border border-blue-200 dark:border-blue-800">
+            <p className="text-blue-700 dark:text-blue-300 text-xs">
+              <strong>Akun Test yang Tersedia:</strong><br/>
+              Email: masmin@coba.com<br/>
+              Password: (gunakan password yang sudah dibuat)
+            </p>
+          </div>
+          <p>
+            Bermasalah saat login? <Link href="/setup-admin" className="underline hover:text-primary">Setup Akun MasterAdmin</Link>
           </p>
           <p className="pt-2">&copy; {new Date().getFullYear()} PIS. All rights reserved.</p>
         </CardFooter>
