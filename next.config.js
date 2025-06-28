@@ -1,12 +1,3 @@
-// next.config.js
-const withPWA = require("@ducanh2912/next-pwa").default({
-  dest: "public",
-  register: true,
-  skipWaiting: true,
-  disable: process.env.NODE_ENV === "development",
-});
-
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
@@ -31,6 +22,10 @@ const nextConfig = {
       },
     ],
   },
+  // Add experimental flags to help with the workStore issue
+  experimental: {
+    serverComponentsExternalPackages: ['firebase-admin'],
+  },
 };
 
-module.exports = withPWA(nextConfig);
+module.exports = nextConfig;
